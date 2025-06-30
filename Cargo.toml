@@ -1,0 +1,19 @@
+[package]
+name = "giveeggs"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ntfy = "0.7.0"
+reqwest = "0.12.20"
+serde = "1.0.219"
+tokio = { version = "1.0.0", features = ["rt", "rt-multi-thread", "macros"] }
+tracing = "0.1.41"
+tracing-subscriber = "0.3.19"
+
+[profile.release]
+#rustflags = ["-C", "target-feature=+crt-static"]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
