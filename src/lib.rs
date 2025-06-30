@@ -4,8 +4,9 @@ use std::collections::HashMap;
 use std::error::Error;
 use ntfy::{dispatcher::{self, Async}, Dispatcher, Payload, Priority};
 use reqwest::{IntoUrl, Url};
-use reqwest::header::USER_AGENT;
+use reqwest::header::{ACCEPT, COOKIE, USER_AGENT};
 use tracing::{error, warn};
+
 use crate::json::{Notification, ProductChange};
 
 pub struct Eggs<'a> {
@@ -22,9 +23,9 @@ impl<'a> Eggs<'a> {
         let url = url.into_url()?;
         let client = reqwest::Client::new();
         let dispatcher = dispatcher::builder(dispatcher_tuple.0.as_str()).build_async()?;
-        let previous_products = Self::fetch_products_helper(&client, &url, &product_ids).await?;
-        // let mut previous_products: HashMap<u64, json::Product> = Default::default();
-        // previous_products.insert(8314152616094, Default::default());
+        // let previous_products = Self::fetch_products_helper(&client, &url, &product_ids).await?;
+        let mut previous_products: HashMap<u64, json::Product> = Default::default();
+        previous_products.insert(8314152616094, Default::default());
 
         Ok(Self {
             client,
@@ -50,7 +51,7 @@ impl<'a> Eggs<'a> {
                 let notification = match change {
                     ProductChange::VariantPriceChanged { variant_id, old_price, new_price } => Notification {
                         title: format!("Price Update for Variant {}", variant_id),
-                        message: format!("Price changed from {} USD to {} USD", old_price, new_price),
+                        message: format!("Price changed from {} GBP to {} GBP", old_price, new_price),
                         priority: Priority::High,
                         tags: vec!["price".to_string(), "rotating_light".to_string()],
                     },
@@ -64,7 +65,7 @@ impl<'a> Eggs<'a> {
                     },
                     ProductChange::NewVariantAdded(ref variant) => Notification {
                         title: format!("New Variant Added: {}", variant.title),
-                        message: format!("New variant added with price: {} USD", variant.price),
+                        message: format!("New variant added with price: {} GBP", variant.price),
                         priority: Priority::Default,
                         tags: vec!["variant".to_string(), "new".to_string()],
                     },
@@ -110,6 +111,7 @@ impl<'a> Eggs<'a> {
     ) -> Result<HashMap<u64, json::Product>, Box<dyn Error>> {
         let req = client.get(url.join("/products.json")?)
             .header(USER_AGENT, "Meow Meow I'm a cat (assuka_)")
+            .header(COOKIE, "localization=GB;cart_currency=GBP;")
             .send().await?;
         
         if !req.status().is_success() {
