@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+fast_html2md = "0.0.48"
 ntfy = "0.7.0"
 reqwest = "0.12.20"
 serde = "1.0.219"

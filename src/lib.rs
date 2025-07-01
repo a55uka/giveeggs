@@ -1,137 +1,116 @@
-pub mod json;
+pub mod client;
+pub mod models;
+pub mod notification;
+pub mod product_comparison;
 
+use ntfy::{
+    Dispatcher,
+    dispatcher::{self, Async},
+};
+use reqwest::{IntoUrl, Url};
 use std::collections::HashMap;
 use std::error::Error;
-use ntfy::{dispatcher::{self, Async}, Dispatcher, Payload, Priority};
-use reqwest::{IntoUrl, Url};
-use reqwest::header::{ACCEPT, COOKIE, USER_AGENT};
-use tracing::{error, warn};
+use std::sync::Arc;
+use tracing::{info, warn};
 
-use crate::json::{Notification, ProductChange};
+use crate::{client::ShopifyClient, models::Product, notification::NotificationBuilder};
 
-pub struct Eggs<'a> {
-    client: reqwest::Client,
-    dispatcher: Dispatcher<Async>,
-    ntfy_id: &'a str,
-    previous_products: HashMap<u64, json::Product>,
-    pub url: Url,
-    pub product_ids: Vec<u64>,
+type BoxError = Box<dyn Error + Send + Sync>;
+
+pub struct ProductMonitor {
+    client: ShopifyClient,
+    dispatcher: Arc<Dispatcher<Async>>,
+    ntfy_topic: String,
+    previous_products: HashMap<u64, Product>,
+    base_url: Url,
+    product_ids: Vec<u64>,
 }
 
-impl<'a> Eggs<'a> {
-    pub async fn new<U: IntoUrl>(url: U, dispatcher_tuple: (U, &'a str), product_ids: Vec<u64>) -> Result<Self, Box<dyn Error>> {
-        let url = url.into_url()?;
-        let client = reqwest::Client::new();
-        let dispatcher = dispatcher::builder(dispatcher_tuple.0.as_str()).build_async()?;
-        // let previous_products = Self::fetch_products_helper(&client, &url, &product_ids).await?;
-        let mut previous_products: HashMap<u64, json::Product> = Default::default();
-        previous_products.insert(8314152616094, Default::default());
+impl ProductMonitor {
+    pub fn new<U: IntoUrl>(
+        base_url: U,
+        ntfy_url: U,
+        ntfy_topic: impl Into<String>,
+        product_ids: Vec<u64>,
+    ) -> Result<Self, BoxError> {
+        let base_url = base_url.into_url()?;
+        let ntfy_topic = ntfy_topic.into();
+
+        let client = ShopifyClient::new(base_url.clone());
+        let dispatcher = Arc::new(dispatcher::builder(ntfy_url.as_str()).build_async()?);
+
+        let previous_products = HashMap::new();
 
         Ok(Self {
             client,
             dispatcher,
-            ntfy_id: dispatcher_tuple.1,
+            ntfy_topic,
             previous_products,
-            url,
-            product_ids
+            base_url,
+            product_ids,
         })
     }
 
-    pub async fn notify_changes(&mut self) -> Result<(), Box<dyn Error>> {
-        let products = self.fetch_products().await?;
+    pub async fn initialize(&mut self) -> Result<(), BoxError> {
+        info!("Fetching initial product state...");
+        self.previous_products = self.client.fetch_products(&self.product_ids).await?;
+        // self.previous_products = HashMap::new(); // Testing notifs
+        // self.previous_products.insert(8314152616094, Product {
+        //     id: 8314152616094,
+        //     title: "".to_string(),
+        //     handle: "".to_string(),
+        //     body_html: "".to_string(),
+        //     published_at: "".to_string(),
+        //     created_at: "".to_string(),
+        //     updated_at: "".to_string(),
+        //     vendor: "".to_string(),
+        //     product_type: "".to_string(),
+        //     tags: vec![],
+        //     variants: vec![],
+        //     images: vec![],
+        //     options: vec![],
+        // });
+        info!(
+            "Initial state loaded for {} products",
+            self.previous_products.len()
+        );
+        Ok(())
+    }
 
-        for (id, product) in &products {
-            let previous_product = match self.previous_products.get(id) {
-                Some(prod) => prod,
-                None => break,
-            };
-            let changes = previous_product.compare_nfty_with(product).await?;
+    pub async fn check_for_changes(&mut self) -> Result<(), BoxError> {
+        let current_products = self.client.fetch_products(&self.product_ids).await?;
 
-            for change in changes {
-                let notification = match change {
-                    ProductChange::VariantPriceChanged { variant_id, old_price, new_price } => Notification {
-                        title: format!("Price Update for Variant {}", variant_id),
-                        message: format!("Price changed from {} GBP to {} GBP", old_price, new_price),
-                        priority: Priority::High,
-                        tags: vec!["price".to_string(), "rotating_light".to_string()],
-                    },
-                    ProductChange::VariantAvailabilityChanged { variant_id, old_available, new_available } => Notification {
-                        title: format!("Variant {} Availability Update", variant_id),
-                        message: format!("Availability changed from {} to {}",
-                                         if old_available { "In Stock" } else { "Out of Stock" },
-                                         if new_available { "In Stock" } else { "Out of Stock" }),
-                        priority: if new_available { Priority::Max } else { Priority::Low },
-                        tags: vec!["availability".to_string(), "rotating_light".to_string()],
-                    },
-                    ProductChange::NewVariantAdded(ref variant) => Notification {
-                        title: format!("New Variant Added: {}", variant.title),
-                        message: format!("New variant added with price: {} GBP", variant.price),
-                        priority: Priority::Default,
-                        tags: vec!["variant".to_string(), "new".to_string()],
-                    },
-                    ProductChange::TitleChanged { old, new } => Notification {
-                        title: "Product Title Changed".to_string(),
-                        message: format!("Changed from '{}' to '{}'", old, new),
-                        priority: Priority::Default,
-                        tags: vec!["title".to_string(), "update".to_string()],
-                    },
-                    ProductChange::DescriptionChanged { old, new } => Notification {
-                        title: "Product Description Changed".to_string(),
-                        message: format!("Changed from:\n{}\nto:\n{}", old, new),
-                        priority: Priority::Low,
-                        tags: vec!["description".to_string(), "update".to_string()],
-                    }
-                };
+        for (id, current_product) in &current_products {
+            if let Some(previous_product) = self.previous_products.get(id) {
+                let changes = previous_product.compare_with(current_product);
 
-                warn!("Notification sent: {:#?}", notification);
-                
-                let payload = Payload::new(self.ntfy_id)
-                    .title(notification.title)
-                    .message(notification.message)
-                    .tags(notification.tags)
-                    .priority(notification.priority)
-                    .click(self.url.join("/products")?.join(&product.handle)?)
-                    .markdown(true);
-
-                self.dispatcher.send(&payload).await?;
+                for change in &changes {
+                    self.send_notification(change, current_product).await?;
+                }
+            } else {
+                info!("New product detected: {}", id);
             }
         }
+
+        self.previous_products = current_products;
 
         Ok(())
     }
 
-    async fn fetch_products(&self) -> Result<HashMap<u64, json::Product>, Box<dyn Error>> {
-        Self::fetch_products_helper(&self.client, &self.url, &self.product_ids).await
+    async fn send_notification(
+        &self,
+        change: &product_comparison::ProductChange,
+        product: &Product,
+    ) -> Result<(), BoxError> {
+        let (notification, product_url) =
+            NotificationBuilder::build_from_change(change, product, &self.base_url)?;
+
+        warn!("Sending notification: {:#?}", notification);
+
+        let payload = NotificationBuilder::build_payload(notification, &self.ntfy_topic, product_url);
+
+        let dispatcher = Arc::clone(&self.dispatcher);
+        dispatcher.send(&payload).await?;
+        Ok(())
     }
-
-    async fn fetch_products_helper(
-        client: &reqwest::Client,
-        url: &Url,
-        product_ids: &[u64]
-    ) -> Result<HashMap<u64, json::Product>, Box<dyn Error>> {
-        let req = client.get(url.join("/products.json")?)
-            .header(USER_AGENT, "Meow Meow I'm a cat (assuka_)")
-            .header(COOKIE, "localization=GB;cart_currency=GBP;")
-            .send().await?;
-        
-        if !req.status().is_success() {
-            error!("Request failed: {:?}", req.status());
-        }
-
-        let json: json::Root = req.json().await?;
-
-        let mut map: HashMap<u64, json::Product> = HashMap::with_capacity(product_ids.len());
-
-        for id in product_ids {
-            if let Some(product) = find_by_id(&json.products, *id) {
-                map.insert(*id, product.clone());
-            }
-        }
-
-        Ok(map)
-    }
-}
-
-fn find_by_id(items: &[json::Product], target_id: u64) -> Option<&json::Product> {
-    items.iter().find(|item| item.id == target_id)
 }
