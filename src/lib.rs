@@ -52,7 +52,7 @@ impl ProductMonitor {
     }
 
     pub async fn initialize(&mut self) -> Result<(), BoxError> {
-        info!("Fetching initial product state...");
+        info!("Fetching initial egg state...");
         self.previous_products = self.client.fetch_products(&self.product_ids).await?;
         // self.previous_products = HashMap::new(); // Testing notifs
         // self.previous_products.insert(8314152616094, Product {
@@ -88,7 +88,7 @@ impl ProductMonitor {
                     self.send_notification(change, current_product).await?;
                 }
             } else {
-                info!("New product detected: {}", id);
+                info!("New egg detected: {}", id);
             }
         }
 

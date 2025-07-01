@@ -14,7 +14,7 @@ type BoxError = Box<dyn Error + Send + Sync>;
 async fn main() -> Result<(), BoxError> {
     tracing_subscriber::fmt::init();
 
-    info!("Starting product monitor...");
+    info!("Starting egg monitor...");
 
     let worker = tokio::spawn(async {
         let mut monitor = match ProductMonitor::new(
@@ -25,18 +25,18 @@ async fn main() -> Result<(), BoxError> {
         ) {
             Ok(monitor) => monitor,
             Err(e) => {
-                error!("Failed to create product monitor: {}", e);
+                error!("Failed to create egg monitor: {}", e);
                 return 1;
             }
         };
 
         if let Err(e) = monitor.initialize().await {
-            error!("Failed to initialize product monitor: {}", e);
+            error!("Failed to initialize egg monitor: {}", e);
             return 1;
         }
 
         loop {
-            info!("Checking for product changes...");
+            info!("Checking for egg changes...");
 
             match monitor.check_for_changes().await {
                 Ok(_) => {
