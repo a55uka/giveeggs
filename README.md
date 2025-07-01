@@ -21,7 +21,7 @@ A monitoring tool that tracks product (egg) changes on Shopify instances and sen
 1. Clone the repository:
 
 ```bash
-git clone https://github.com/yourusername/giveeggs.git
+git clone https://github.com/a55uka/giveeggs.git
 cd giveeggs
 ```
 
